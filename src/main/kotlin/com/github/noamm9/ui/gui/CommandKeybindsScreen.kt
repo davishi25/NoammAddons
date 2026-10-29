@@ -33,7 +33,7 @@ class CommandKeybindsScreen: Screen(Component.literal("Command Keybinds")) {
     private val panelH = 250f
     private val entryHeight = 26f
     private val inputHeight = 18f
-    private val commandWidth = 100f
+    private val keybindWidth = 200f
     private val arrowWidth = 20f
     private val deleteWidth = 16f
     private val addBtnW = 120f
@@ -97,18 +97,18 @@ class CommandKeybindsScreen: Screen(Component.literal("Command Keybinds")) {
 
         row.keybindInput.x = x
         row.keybindInput.y = inputY
-        row.keybindInput.width = commandWidth
+        row.keybindInput.width = keybindWidth
         row.keybindInput.height = inputHeight
 
-        row.commandInput.x = x + commandWidth + arrowWidth
+        row.commandInput.x = x + keybindWidth + arrowWidth
         row.commandInput.y = inputY
-        row.commandInput.width = viewW - commandWidth - arrowWidth - deleteWidth - 10
+        row.commandInput.width = viewW - keybindWidth - arrowWidth - deleteWidth - 10
         row.commandInput.height = inputHeight
     }
 
     private fun drawRow(ctx: GuiGraphicsExtractor, row: Row, x: Float, y: Float, mx: Float, my: Float) {
         drawInput(ctx, row.keybindInput, row.keybind.isEmpty(), "key.keyboard.p", mx, my)
-        ctx.drawCenteredString("➜", x + commandWidth + arrowWidth / 2, y + 9)
+        ctx.drawCenteredString("➜", x + keybindWidth + arrowWidth / 2, y + 9)
         drawInput(ctx, row.commandInput, row.command.isEmpty(), "warp dh", mx, my)
 
         val delX = deleteX(x)
