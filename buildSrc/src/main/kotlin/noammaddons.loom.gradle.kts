@@ -5,14 +5,21 @@ plugins {
 }
 
 configure<LoomGradleExtensionAPI> {
-    accessWidenerPath.set(file("src/main/resources/${findProperty("mod_id")}.accesswidener"))
+    accessWidenerPath.set(rootProject.file("src/main/resources/${findProperty("mod_id")}.accesswidener"))
 
     runs {
         val clientRun = named("client")
         val serverRun = named("server")
 
-        clientRun.configure { generateRunConfig.set(false) }
-        serverRun.configure { generateRunConfig.set(false) }
+        clientRun.configure {
+            runDirectory.set(rootProject.file("run/"))
+            generateRunConfig.set(false)
+        }
+
+        serverRun.configure {
+            runDirectory.set(rootProject.file("run/"))
+            generateRunConfig.set(false)
+        }
 
         val sourceSets = the<SourceSetContainer>()
         val mainSourceSet = sourceSets.named("main").get()
@@ -22,7 +29,7 @@ configure<LoomGradleExtensionAPI> {
         maybeCreate("cheatClient").apply {
             inherit(clientRun.get())
             displayName.set("Cheat Client")
-            runDirectory.set(file("run/"))
+            runDirectory.set(rootProject.file("run/"))
             sourceSet.set(mainSourceSet.name)
             generateRunConfig.set(false)
         }
@@ -30,7 +37,7 @@ configure<LoomGradleExtensionAPI> {
         maybeCreate("cheatClientPreprocessed").apply {
             inherit(clientRun.get())
             displayName.set("Cheat Client (Preprocessed)")
-            runDirectory.set(file("run/"))
+            runDirectory.set(rootProject.file("run/"))
             sourceSet.set(cheatSourceSet.name)
             generateRunConfig.set(false)
         }
@@ -38,7 +45,7 @@ configure<LoomGradleExtensionAPI> {
         maybeCreate("legitClientPreprocessed").apply {
             inherit(clientRun.get())
             displayName.set("Legit Client (Preprocessed)")
-            runDirectory.set(file("run/"))
+            runDirectory.set(rootProject.file("run/"))
             sourceSet.set(legitSourceSet.name)
             generateRunConfig.set(false)
         }

@@ -24,6 +24,19 @@ idea {
     }
 }
 
+if (System.getProperty("idea.sync.active").toBoolean()) {
+    val hiddenSourceSets = listOfNotNull(
+        sourceSets["cheat"],
+        sourceSets["legit"],
+        sourceSets["main"].takeUnless { stonecutter.current.isActive }
+    )
+
+    hiddenSourceSets.forEach { sourceSet ->
+        sourceSet.java.setSrcDirs(emptyList<File>())
+        sourceSet.kotlin.setSrcDirs(emptyList<File>())
+    }
+}
+
 val minecraft_version = project.property("minecraft_version") as String
 val loader_version = project.property("loader_version") as String
 val fabric_kotlin_version = project.property("fabric_kotlin_version") as String
@@ -34,7 +47,8 @@ val fabric_version = project.property("fabric_version") as String
 val modmenu_version = project.property("modmenu_version") as String
 val ktor_version = project.property("ktor_version") as String
 val iris_version = project.property("iris_version") as String
-val universalcraft_version = project.property("universalcraft_version") as String
+val datafixer_version = project.property("datafixer_version") as String
+val datafixerCapability = "me.owdding:item-data-fixer-$minecraft_version"
 
 version = mod_version
 group = maven_group
@@ -50,10 +64,11 @@ configurations {
 
 repositories {
     maven("https://pkgs.dev.azure.com/djtheredstoner/DevAuth/_packaging/public/maven/v1")
-    maven("https://repo.essential.gg/repository/maven-public")
     maven("https://maven.terraformersmc.com/releases/")
     maven("https://api.modrinth.com/maven")
-    maven("https://jitpack.io")
+    maven("https://maven.teamresourceful.com/repository/thatgravyboat/") {
+        content { includeGroup("me.owdding") }
+    }
 }
 
 dependencies {
@@ -71,9 +86,8 @@ dependencies {
     annotationProcessor("io.github.llamalad7:mixinextras-fabric:0.5.5")
 
     bundled("io.github.classgraph:classgraph:6.0.0")
-    bundled("com.github.Noamm9:DataFixer:26.3-SNAPSHOT")
-    bundled("gg.essential:universalcraft-26.3-fabric:$universalcraft_version") {
-        exclude(group = "net.fabricmc", module = "fabric-loader")
+    bundled("me.owdding:item-data-fixer:$datafixer_version") {
+        capabilities { requireCapability(datafixerCapability) }
     }
     bundled("io.ktor:ktor-client-okhttp-jvm:$ktor_version")
     bundled("io.ktor:ktor-client-content-negotiation-jvm:$ktor_version")
@@ -86,7 +100,10 @@ dependencies {
 afterEvaluate {
     bundled.resolvedConfiguration.resolvedArtifacts.forEach { artifact ->
         artifact.moduleVersion.id.let { id ->
-            dependencies.add("include", "${id.group}:${id.name}:${id.version}")
+            val include = dependencies.add("include", "${id.group}:${id.name}:${id.version}") as ModuleDependency
+            if ("${id.group}:${id.name}" == "me.owdding:item-data-fixer") {
+                include.capabilities { requireCapability(datafixerCapability) }
+            }
         }
     }
 }
@@ -172,4 +189,5 @@ listOf("jarCheat", "jarLegit").forEach { taskName ->
 
 tasks.named<Test>("test") {
     failOnNoDiscoveredTests = false
+    workingDir = temporaryDir
 }
