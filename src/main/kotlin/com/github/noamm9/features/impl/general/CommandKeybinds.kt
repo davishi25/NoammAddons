@@ -7,7 +7,6 @@ import com.github.noamm9.features.IFeatureScreen
 import com.github.noamm9.ui.gui.CommandKeybindsScreen
 import com.github.noamm9.utils.ChatUtils
 import com.mojang.blaze3d.platform.InputConstants
-import net.minecraft.client.Minecraft
 
 object CommandKeybinds: Feature("Create your own command keybinds"), IFeatureScreen {
     val keybinds = PogObject("commandKeybinds", linkedMapOf<String, String>())
@@ -15,7 +14,7 @@ object CommandKeybinds: Feature("Create your own command keybinds"), IFeatureScr
     override fun init() {
         register<KeyboardEvent.KeyPressed> {
             if(event.action != InputConstants.PRESS) return@register
-            if(Minecraft.getInstance().gui.screen() != null) return@register
+            if(mc.gui.screen() != null) return@register
             val key = InputConstants.getKey(event.keyEvent).name
             val binds = keybinds.get()
             if(!binds.containsKey(key)) return@register
