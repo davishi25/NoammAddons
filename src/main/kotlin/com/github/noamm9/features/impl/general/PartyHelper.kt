@@ -17,26 +17,44 @@ import com.mojang.brigadier.arguments.StringArgumentType
 import net.minecraft.network.chat.*
 import net.minecraft.network.protocol.game.ServerboundChatCommandPacket
 import net.minecraft.sounds.SoundEvents
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
 object PartyHelper: Feature("Party commands and reformatting."), ICommandProvider {
     private val partyCommands by ToggleSetting("Party Commands", true).section("Party Commands")
     private val partyLeaderCheck by ToggleSetting("Leader Only", false).showIf { partyCommands.value }
-    private val commands by MultiCheckboxSetting("Enabled Commands", mutableMapOf(
-        "!w" to true, "!f" to true, "!m" to true, "!inv" to true,
-        "!kick" to true, "!dt" to true, "!ping" to true, "!tps" to true, "!fps" to true,
-        "!pt" to true, "!ai" to true, "!coords" to true, "!gay" to true
-    )).showIf { partyCommands.value }
+    private val commands by MultiCheckboxSetting(
+        "Enabled Commands", mutableMapOf(
+            "!w" to true,
+            "!f" to true,
+            "!m" to true,
+            "!inv" to true,
+            "!kick" to true,
+            "!dt" to true,
+            "!ping" to true,
+            "!tps" to true,
+            "!fps" to true,
+            "!time" to true,
+            "!pt" to true,
+            "!ai" to true,
+            "!reinv" to true,
+            "!coords" to true,
+            "!gay" to true
+        )
+    ).showIf { partyCommands.value }
 
     private val partyAddons by ToggleSetting("Reformat Party List", true).section("Party Addons")
 
     private val playerBlacklist = PogObject("party_command_blacklist", mutableSetOf<String>())
     val downtimeList = mutableMapOf<String, String>()
+    private val pendingReinvites = mutableMapOf<String, String>()
+    private val formerMembers = mutableSetOf<String>()
     private var awaitingDelimiter = 0
 
     private val partyStartPattern = Regex("^Party Members \\((\\d+)\\)$")
     private val partyCommandRegex = Regex("^Party > (?:\\[[^]]+] )?([^:]+): ([!?.\\-@#`/])(.+)$")
-
+    private val reinviteDmRegex = Regex("^From (?:\\[[^]]+] )?(\\w{1,16}): [!?.\\-@#`/]reinv(?:ite)?$", RegexOption.IGNORE_CASE)
     override fun CommandBuilder.command() {
         setName("partycommandsblacklist", "pcbl")
         description("Manages the party command blacklist")
@@ -98,12 +116,35 @@ object PartyHelper: Feature("Party commands and reformatting."), ICommandProvide
                 handlePartyCommand(name, cmd, args)
                 return@register
             }
+
+            if (partyCommands.value && commands["!reinv"]) reinviteDmRegex.find(event.unformattedText)?.let {
+                val sender = it.groupValues[1]
+                if (isBlacklisted(sender)) return@let
+                if (sender.lowercase() !in formerMembers) return@let
+                if (PartyUtils.isMember(sender)) return@let
+                if (PartyUtils.isInParty && ! PartyUtils.canInvite()) return@let
+                if (PartyUtils.isInParty && partyLeaderCheck.value && ! isLeader()) return@let
+
+                ChatUtils.sendCommand("p invite $sender")
+            }
         }
 
         register<PrintMessageEvent> {
             if (partyAddons.value && awaitingDelimiter > 0) {
                 handlePartyListParsing(event)
             }
+        }
+
+        register<PartyEvent.MemberLeft> {
+            if (event.cause != PartyEvent.LeaveCause.LEFT) return@register
+            formerMembers.add(event.name.lowercase())
+            pendingReinvites.remove(event.name.lowercase())?.let { ChatUtils.sendCommand("p invite $it") }
+        }
+
+        register<PartyEvent.Left> {
+            formerMembers.addAll(event.members.map { it.lowercase() })
+            pendingReinvites.values.forEach { ChatUtils.sendCommand("p invite $it") }
+            pendingReinvites.clear()
         }
 
         register<DungeonEvent.RunEndedEvent> {
@@ -121,6 +162,9 @@ object PartyHelper: Feature("Party commands and reformatting."), ICommandProvide
 
         when {
             commands["!fps"] && cmd == "fps" -> ChatUtils.sendPartyMessage("FPS: ${mc.fps}")
+            commands["!tps"] && cmd == "tps" -> ChatUtils.sendPartyMessage("TPS: ${ServerUtils.tps.toFixed(1)}")
+            commands["!ping"] && cmd == "ping" -> ChatUtils.sendPartyMessage("Ping: ${ServerUtils.currentPing}ms")
+            commands["!time"] && cmd == "time" -> ChatUtils.sendPartyMessage("Time: ${LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))}")
 
             commands["!f"] && cmd.startsWith("f") -> {
                 val floor = cmd.removePrefix("f").toIntOrNull() ?: args.getOrNull(0)?.toIntOrNull() ?: return
@@ -155,10 +199,6 @@ object PartyHelper: Feature("Party commands and reformatting."), ICommandProvide
 
             commands["!ai"] && cmd.equalsOneOf("ai", "allinvite") -> runCommand("p settings allinvite", true)
 
-            commands["!ping"] && cmd == "ping" -> ChatUtils.sendPartyMessage("Ping: ${ServerUtils.currentPing}ms")
-
-            commands["!tps"] && cmd == "tps" -> ChatUtils.sendPartyMessage("TPS: ${ServerUtils.tps.toFixed(1)}")
-
             commands["!kick"] && cmd.equalsOneOf("kick", "k") -> {
                 if (args.isEmpty()) return
                 PartyUtils.members.find { it.contains(args[0], true) }?.let {
@@ -168,6 +208,12 @@ object PartyHelper: Feature("Party commands and reformatting."), ICommandProvide
 
             commands["!inv"] && cmd.equalsOneOf("inv", "kidnap", "invite") -> {
                 args.firstOrNull()?.let { runCommand("p invite $it", true) }
+            }
+
+            commands["!reinv"] && cmd.equalsOneOf("reinv", "reinvite") -> {
+                if (sender.equals(mc.user.name, true) || ! PartyUtils.canInvite()) return
+                if (partyLeaderCheck.value && ! isLeader()) return
+                pendingReinvites[sender.lowercase()] = sender
             }
 
             commands["!gay"] && cmd == "gay" -> {
