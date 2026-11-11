@@ -33,12 +33,14 @@ object PartyFinder: Feature(), ICommandProvider {
     private val showMissingOverlay by ToggleSetting("Show Missing Classes", true).withDescription("Shows missing classes on the head.")
 
     private val showMissingTooltip by ToggleSetting("Show Missing List", true).withDescription("Shows the list of missing classes at the bottom of the tooltip.").section("Tooltip")
-    private val showTooltipStats by MultiCheckboxSetting("Show Player Stats", mutableMapOf(
-        "Catacombs Level" to false,
-        "Total Secrets & Avg" to false,
-        "Magical Power" to false,
-        "PB Time" to false
-    )).withDescription("Shows player stats (Cata/Secrets/PB) in tooltip.")
+    private val showTooltipStats by MultiCheckboxSetting(
+        "Show Player Stats", mutableMapOf(
+            "Catacombs Level" to false,
+            "Total Secrets & Avg" to false,
+            "Magical Power" to false,
+            "PB Time" to false
+        )
+    ).withDescription("Shows player stats (Cata/Secrets/PB) in tooltip.")
 
     private val autoKick by ToggleSetting("Auto Kick", false).withDescription("Automatically kick players that don't meet requirements.").section("Auto Kick")
     private val autoKickFloor by DropdownSetting("Floor", 6, listOf("F1", "F2", "F3", "F4", "F5", "F6", "F7")).showIf { autoKick.value }
@@ -49,9 +51,10 @@ object PartyFinder: Feature(), ICommandProvider {
     private val minimumMagicalPower by SliderSetting("Minimum MP", 0, 0, 3000, 10).withDescription("Minimum MP Set to 0 to disable. Skipped when Inventory API is off.").showIf { autoKick.value }
 
     private val dungeonGroupJoinRegex = Regex("^Party Finder > (\\w{1,16}) joined the dungeon group! \\((\\w+) Level (\\d+)\\)$")
-    private val kickedPlayers = mutableSetOf<String>()
+    private val kickedPlayers = Collections.synchronizedSet(HashSet<String>())
 
     private val partyMembersRegex = Regex("^\\s*(\\w{1,16}):?\\s+(Archer|Tank|Berserk|Healer|Mage)\\s*\\((\\d+)\\)\\s*$")
+    private val pfTimeRegex = Regex("(?<![\\w:.])(?:sub\\s*)?(?:(\\d+)[:.]?([0-5])([\\dx])|(\\d{1,2}))(?![\\w:]|\\.\\d)", RegexOption.IGNORE_CASE) // https://regex101.com/r/cFt0mB/1
     private val levelRequiredRegex = Regex("Dungeon Level Required:\\s*(\\d+)")
     private val floorRegex = Regex("Floor:\\s*Floor\\s+(\\w+)")
     private val selectedClassRegex = Regex("Currently Selected: (.+)")
@@ -174,6 +177,24 @@ object PartyFinder: Feature(), ICommandProvider {
         register<ContainerEvent.Close> { inPartyFinder = false }
 
         register<WorldChangeEvent> { kickedPlayers.clear() }
+
+        register<PartyEvent.FinderGroupSettings> {
+            if (event.floor !in 1 .. autoKickFloor.options.size) return@register
+            autoKickFloor.value = event.floor - 1
+            masterMode.value = event.masterMode
+
+            run {
+                val (minutes, tens, ones, minutesOnly) = pfTimeRegex.find(event.note.trim())?.destructured ?: return@run null
+                if (minutesOnly.isNotEmpty()) return@run minutesOnly.toInt() * 60
+                return@run minutes.toInt() * 60 + tens.toInt() * 10 + (ones.toIntOrNull() ?: 0)
+            }?.let(maximumSeconds::value::set)
+
+            if (autoKick.value) ChatUtils.modMessage(
+                "&eUpdated Auto Kick settings. (${
+                    (if (event.masterMode) "M" else "F") + event.floor + " " + formatTime(maximumSeconds.value * 1000)
+                })"
+            )
+        }
 
         register<ChatMessageEvent> {
             if (! autoKick.value && ! showJoinStats.value) return@register
@@ -302,9 +323,12 @@ object PartyFinder: Feature(), ICommandProvider {
             return
         }
 
-        val reasons = mutableListOf<String>().apply {
-            val profile = ProfileUtils.getProfile(name).getOrNull() ?: return@apply
+        val profile = ProfileUtils.getProfile(name).getOrElse {
+            ChatUtils.modMessage("&9AutoKick &f> &cCouldn't check &e$name &c(${it.message?.take(60) ?: "lookup failed"}), not kicking")
+            return
+        }
 
+        val reasons = mutableListOf<String>().apply {
             val dungeons = profile.dungeons
             val floor = autoKickFloor.value + 1
             val dungeonType = if (masterMode.value) dungeons.masterCatacombs else dungeons.catacombs

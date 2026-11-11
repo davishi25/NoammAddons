@@ -7,10 +7,16 @@ import com.github.noamm9.event.impl.*
 import com.github.noamm9.event.priority.EventPriority
 import com.github.noamm9.init.types.ISelfInit
 import com.github.noamm9.utils.ChatUtils.removeFormatting
+import com.github.noamm9.utils.ChatUtils.unformattedText
+import com.github.noamm9.utils.NumbersUtils.romanToDecimal
 import com.github.noamm9.utils.dungeons.DungeonListener
+import com.github.noamm9.utils.items.ItemUtils.lore
 import com.github.noamm9.utils.location.LocationUtils
+import com.github.noamm9.utils.location.WorldType
+import net.minecraft.world.item.Items
 
 // todo: party mute state.
+// todo: cache player ranks
 object PartyUtils: ISelfInit {
     enum class PartyRole { LEADER, MOD, MEMBER }
     enum class OnlineState { ONLINE, OFFLINE }
@@ -41,6 +47,7 @@ object PartyUtils: ISelfInit {
         "You are not in a party.",
     )
     private const val DISBANDED_PREFIX = "The party was disbanded because "
+    private const val QUEUING_PARTY = "Queueing your party..."
 
     private val joined = line("$RANK$NAME joined the party\\.")
     private val finderJoined = line("Party Finder > $RANK$NAME joined the (?:dungeon )?group! \\(.+\\)")
@@ -73,6 +80,7 @@ object PartyUtils: ISelfInit {
     private val separator = Regex("^[-▬=\\s]+$")
     private var membersKnown = false
     private var listSize: Int? = null
+    private var createdGroup = false
 
     @Volatile var partyMembers: List<PartyMember> = emptyList()
         private set(value) {
@@ -126,6 +134,34 @@ object PartyUtils: ISelfInit {
                 upsert(t.name, state = OnlineState.ONLINE)
             }
         }
+
+        register<ContainerFullyOpenedEvent> {
+            if (LocationUtils.world != WorldType.DungeonHub) return@register
+            if (event.title.string != "Group Builder") return@register
+            if (event.items[32]?.hoverName?.unformattedText != "Confirm Group") return@register
+
+            val typeSlot = event.items[11]?.takeIf { it.`is`(Items.PLAYER_HEAD) } ?: return@register
+            val floorSlot = event.items[12]?.takeIf { it.`is`(Items.PLAYER_HEAD) } ?: return@register
+            val noteSlot = event.items[13]?.takeIf { it.`is`(Items.PAPER) } ?: return@register
+
+            if (typeSlot.hoverName.string != "Select Dungeon Type") return@register
+            if (floorSlot.hoverName.string != "Select Floor") return@register
+            if (noteSlot.hoverName.string != "Set Group Note") return@register
+
+            val isMaster = typeSlot.lore[3].removeFormatting().substringAfter("Currently Selected: ").startsWith("Master Mode")
+            val floor = floorSlot.lore[3].removeFormatting().substringAfter("Currently Selected: ").let { if (it[0] == 'E') 0 else it.substringAfter("Floor ").romanToDecimal() }
+            val note = noteSlot.lore[4].removeFormatting().substringBeforeLast(".")
+
+            EventBus.post(PartyEvent.FinderGroupSettings(floor, isMaster, note))
+        }
+
+        register<ContainerEvent.SlotClick> {
+            if (! LocationUtils.world.equalsOneOf(WorldType.DungeonHub, WorldType.CrimsonIsle)) return@register
+            if (event.screen.title.string != "Group Builder") return@register
+            if (event.slotId != 32) return@register
+            createdGroup = true
+            ThreadUtils.scheduledTaskServer(20) { createdGroup = false }
+        }
     }
 
     fun getMember(name: String = self) = partyMembers.firstOrNull { it.name.same(name) }
@@ -174,6 +210,11 @@ object PartyUtils: ISelfInit {
             upsert(name, state = OnlineState.ONLINE)
             EventBus.post(PartyEvent.MemberJoined(name))
             return
+        }
+
+        if (text == QUEUING_PARTY && createdGroup && ! isInParty) {
+            createdGroup = false
+            setLeader(self)
         }
 
         removed.matchEntire(text)?.let {
