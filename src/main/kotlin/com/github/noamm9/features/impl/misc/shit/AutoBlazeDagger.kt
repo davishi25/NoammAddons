@@ -6,15 +6,13 @@ import com.github.noamm9.config.types.SliderSetting
 import com.github.noamm9.event.impl.*
 import com.github.noamm9.event.priority.EventPriority
 import com.github.noamm9.features.Feature
+import com.github.noamm9.utils.*
 import com.github.noamm9.utils.ChatUtils.unformattedText
-import com.github.noamm9.utils.PlayerUtils
-import com.github.noamm9.utils.ThreadUtils
 import com.github.noamm9.utils.items.ItemUtils.skyblockId
 import com.github.noamm9.utils.location.LocationUtils
 import com.github.noamm9.utils.location.WorldType
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket
 import net.minecraft.world.entity.decoration.ArmorStand
-import net.minecraft.world.phys.EntityHitResult
 
 object AutoBlazeDagger: Feature("Automatically swaps to the correct dagger for blaze!") {
     private val swapDelay by SliderSetting("Swap Delay", 100, 0, 300, 1).withDescription("Delay to swap in miliseconds")
@@ -24,15 +22,14 @@ object AutoBlazeDagger: Feature("Automatically swaps to the correct dagger for b
     override fun init() {
         register<TickEvent.Start> {
             if (LocationUtils.world != WorldType.CrimsonIsle) return@register
-            val hit = mc.hitResult as? EntityHitResult ?: return@register
+            val hit = MathUtils.raycastEntity(range = 6.0) ?: return@register
 
-            val armorStands = level.entitiesForRendering().filter {
-                it is ArmorStand && it.distanceTo(hit.entity) < 5
-            }
+            for (armor in level.entitiesForRendering()) {
+                if (armor !is ArmorStand) continue
+                if (armor.distanceToSqr(hit.entity) > 42) continue
 
-            armorStands.forEach { armor ->
-                val targetShield = HellionShield.fromText(armor.displayName.unformattedText) ?: return@forEach
-                val dagger = Dagger.entries.find { targetShield in it.shields } ?: return@forEach
+                val targetShield = HellionShield.fromText(armor.displayName.unformattedText) ?: continue
+                val dagger = Dagger.entries.find { targetShield in it.shields } ?: continue
                 trySwap(dagger, targetShield)
                 return@register
             }
@@ -49,7 +46,10 @@ object AutoBlazeDagger: Feature("Automatically swaps to the correct dagger for b
             val dagger = Dagger.fromStack(player.mainHandItem) ?: return@register
 
             ThreadUtils.scheduledTask(4) {
-                trySwap(dagger.other(), dagger.activeShield().other())
+                val d = if (Math.random() > 0.5) dagger.other() else dagger
+                val s = if (Math.random() > 0.5) dagger.activeShield().other() else dagger.activeShield()
+
+                trySwap(d, s)
             }
             event.cancel()
         }
