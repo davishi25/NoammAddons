@@ -1,10 +1,8 @@
 package com.github.noamm9.mixin;
 
-import com.github.noamm9.debug.TestGround;
 import com.github.noamm9.event.EventBus;
 import com.github.noamm9.event.impl.PacketEvent;
 import com.github.noamm9.features.impl.general.CommandShortcuts;
-import com.github.noamm9.utils.ServerTickFixer;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import net.minecraft.network.Connection;
@@ -32,7 +30,6 @@ public class MixinConnection {
 
     @Inject(method = "channelRead0(Lio/netty/channel/ChannelHandlerContext;Lnet/minecraft/network/protocol/Packet;)V", at = @At(value = "INVOKE", target = "Lnet/minecraft/network/Connection;genericsFtw(Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketListener;)V"), cancellable = true)
     private void channelRead0(ChannelHandlerContext ctx, Packet<?> packet, CallbackInfo ci) {
-        if (! TestGround.INSTANCE.getTick()) ServerTickFixer.onPacket(packet);
         if (EventBus.post(new PacketEvent.Received(packet))) ci.cancel();
     }
 }

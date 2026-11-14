@@ -2,9 +2,11 @@ package com.github.noamm9.utils
 
 import com.github.noamm9.NoammAddons.logger
 import com.github.noamm9.NoammAddons.mc
+import com.github.noamm9.debug.TestGround
 import com.github.noamm9.event.EventBus
-import com.github.noamm9.event.impl.TickEvent
-import net.minecraft.network.protocol.Packet
+import com.github.noamm9.event.impl.*
+import com.github.noamm9.event.priority.EventPriority
+import com.github.noamm9.init.types.ISelfInit
 import net.minecraft.network.protocol.common.ClientboundKeepAlivePacket
 import net.minecraft.network.protocol.common.ClientboundPingPacket
 import net.minecraft.network.protocol.game.*
@@ -12,7 +14,7 @@ import net.minecraft.network.protocol.ping.ClientboundPongResponsePacket
 
 // fallback server ticks for when the server stops sending pings
 // each ~50ms packet burst counts as a tick, corrected by ClientboundSetTimePacket gameTime every second
-object ServerTickFixer {
+object ServerTickFixer: ISelfInit {
     private const val BURST_WINDOW = 38_000_000L
     private const val TICK_NANOS = 50_000_000L
     private const val MAX_CORRECTION = 100L
@@ -28,49 +30,50 @@ object ServerTickFixer {
     private var usingPings = true
     private var worldHasPings = false
 
-    @JvmStatic
-    fun onPacket(packet: Packet<*>) {
-        val now = System.nanoTime()
+    override fun init() {
+        EventBus.register<WorldChangeEvent> { resetWorld() }
 
-        when (packet) {
-            is ClientboundKeepAlivePacket, is ClientboundSystemChatPacket, is ClientboundPongResponsePacket -> return
+        EventBus.register<PacketEvent.Received>(priority = EventPriority.HIGH) {
+            if (TestGround.tick) return@register
 
-            is ClientboundLoginPacket, is ClientboundRespawnPacket -> {
-                worldHasPings = false
-                return reset()
+            val now = System.nanoTime()
+
+            when (event.packet) {
+                is ClientboundKeepAlivePacket, is ClientboundSystemChatPacket, is ClientboundPongResponsePacket -> return@register
+                is ClientboundLoginPacket, is ClientboundRespawnPacket -> return@register resetWorld()
+                is ClientboundPingPacket -> if (event.packet.id != 0) {
+                    pinglessBursts = 0
+                    worldHasPings = true
+                    anchorGameTime = - 1L
+                    usingPings = true
+                    return@register postTicks(1)
+                }
             }
 
-            is ClientboundPingPacket -> if (packet.id != 0) {
-                pinglessBursts = 0
-                worldHasPings = true
-                anchorGameTime = - 1L
-                usingPings = true
-                return postTicks(1)
+            if (usingPings) {
+                if (worldHasPings) return@register
+                if (now - lastBurst <= BURST_WINDOW) return@register
+                pinglessBursts = if (now - lastBurst > MAX_PINGLESS_GAP) 1 else pinglessBursts + 1
+                lastBurst = now
+                if (pinglessBursts < PINGLESS_BURSTS) return@register
+
+                usingPings = false
+                logger.info("[ServerTickFixer] falling back to packet bursts + SetTime for server ticks")
+                ChatUtils.showTitle("BAD BOI!!!!")
+                reset()
             }
+
+            if (now - lastBurst > BURST_WINDOW) {
+                val gap = now - lastBurst
+                val ticks = if (lastBurst == 0L || gap > FREEZE_NANOS) 1L else (gap / TICK_NANOS.toDouble() + 0.4).toLong().coerceAtLeast(1)
+                lastBurst = now
+                val skipped = minOf(ticks, pendingSkips)
+                pendingSkips -= skipped
+                postTicks(ticks - skipped)
+            }
+
+            if (event.packet is ClientboundSetTimePacket) correct(event.packet.gameTime)
         }
-
-        if (usingPings) {
-            if (worldHasPings) return
-            if (now - lastBurst <= BURST_WINDOW) return
-            pinglessBursts = if (now - lastBurst > MAX_PINGLESS_GAP) 1 else pinglessBursts + 1
-            lastBurst = now
-            if (pinglessBursts < PINGLESS_BURSTS) return
-
-            usingPings = false
-            logger.info("[ServerTickFixer] falling back to packet bursts + SetTime for server ticks")
-            reset()
-        }
-
-        if (now - lastBurst > BURST_WINDOW) {
-            val gap = now - lastBurst
-            val ticks = if (lastBurst == 0L || gap > FREEZE_NANOS) 1L else (gap / TICK_NANOS.toDouble() + 0.4).toLong().coerceAtLeast(1)
-            lastBurst = now
-            val skipped = minOf(ticks, pendingSkips)
-            pendingSkips -= skipped
-            postTicks(ticks - skipped)
-        }
-
-        if (packet is ClientboundSetTimePacket) correct(packet.gameTime)
     }
 
     private fun correct(gameTime: Long) {
@@ -92,6 +95,13 @@ object ServerTickFixer {
         if (count <= 0) return
         if (anchorGameTime != - 1L) postedTicks += count
         mc.execute { repeat(count.toInt()) { EventBus.post(TickEvent.Server) } }
+    }
+
+    private fun resetWorld() {
+        worldHasPings = false
+        usingPings = true
+        pinglessBursts = 0
+        reset()
     }
 
     private fun reset() {
